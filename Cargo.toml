@@ -1,6 +1,6 @@
 [package]
 name = "windows_service_controller"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 winapi = { version = "0.3.9", features = ["minwindef", "errhandlingapi", "winsvc"] }
 widestring = "1.0.2"
+lazy_static = {version = "1.4.0"}
