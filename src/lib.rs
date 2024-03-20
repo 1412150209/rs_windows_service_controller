@@ -23,28 +23,47 @@ pub mod dword {
         pub kind: DWORD,
     }
 
-    pub const STATUS: HashMap<DWORD, &str> = HashMap::from([
-        (DWORD::from(1u8), "SERVICE_STOPPED"),
-        (DWORD::from(2u8), "SERVICE_START_PENDING"),
-        (DWORD::from(3u8), "SERVICE_STOP_PENDING"),
-        (DWORD::from(4u8), "SERVICE_RUNNING"),
-        (DWORD::from(5u8), "SERVICE_CONTINUE_PENDING"),
-        (DWORD::from(6u8), "SERVICE_PAUSE_PENDING"),
-        (DWORD::from(7u8), "SERVICE_PAUSED"),
+    const STATUS: HashMap<DWORD, STATUS> = HashMap::from([
+        (DWORD::from(1u8), STATUS::SERVICE_STOPPED),
+        (DWORD::from(2u8), STATUS::SERVICE_START_PENDING),
+        (DWORD::from(3u8), STATUS::SERVICE_STOP_PENDING),
+        (DWORD::from(4u8), STATUS::SERVICE_RUNNING),
+        (DWORD::from(5u8), STATUS::SERVICE_CONTINUE_PENDING),
+        (DWORD::from(6u8), STATUS::SERVICE_PAUSE_PENDING),
+        (DWORD::from(7u8), STATUS::SERVICE_PAUSED),
     ]);
+
+    #[derive(Debug)]
+    #[allow(non_camel_case_types)]
+    pub enum STATUS {
+        SERVICE_STOPPED,
+        SERVICE_START_PENDING,
+        SERVICE_STOP_PENDING,
+        SERVICE_RUNNING,
+        SERVICE_CONTINUE_PENDING,
+        SERVICE_PAUSE_PENDING,
+        SERVICE_PAUSED,
+    }
 
     impl Display for ServiceStatus {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             if STATUS.contains_key(&self.kind) {
                 write!(
                     f,
-                    "Service Status({}):{}",
+                    "Service Status({}):{:?}",
                     &self.kind,
-                    STATUS.get(&self.kind).unwrap()
+                    STATUS.get(&self.kind)?
                 )
             } else {
                 write!(f, "UNKNOWN STATUS:{:?}", &self.kind)
             }
+        }
+    }
+
+    impl ServiceStatus {
+        pub fn eq(&self, other: STATUS) -> bool {
+            let value = STATUS.get(&self.kind)?;
+            return value == other;
         }
     }
 }
