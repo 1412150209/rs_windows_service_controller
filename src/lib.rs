@@ -128,12 +128,30 @@ pub mod dword {
                 }
             }
         }
+
+        impl ServiceErrors {
+            pub fn eq(&self, other: &STATUS) -> bool {
+                let value = SERVICE_ERRORS.get(&(self.kind as u16)).unwrap();
+                return value == other;
+            }
+        }
     }
 }
 #[cfg(windows)]
 pub struct WindowsService {
+    sc_manager_handle: SC_HANDLE,
     service_handle: SC_HANDLE,
     pub service_name: &'static str,
+}
+
+#[cfg(windows)]
+impl Drop for WindowsService {
+    fn drop(&mut self) {
+        unsafe {
+            self.sc_manager_handle.drop_in_place();
+            self.service_handle.drop_in_place()
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -146,6 +164,7 @@ impl WindowsService {
             SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_STOP,
         )?;
         Ok(WindowsService {
+            sc_manager_handle,
             service_handle,
             service_name: name,
         })
