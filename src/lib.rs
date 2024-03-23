@@ -1,281 +1,161 @@
-use std::ptr::null_mut;
+use std::mem::size_of;
 
-use crate::dword::service_errors::ServiceErrors;
 use widestring::U16CString;
-use winapi::um::winsvc::{SC_HANDLE, SERVICE_QUERY_STATUS, SERVICE_START, SERVICE_STOP};
-use winapi::{
-    shared::minwindef::DWORD,
-    um::{
-        errhandlingapi::GetLastError,
-        winsvc::{
-            ControlService, OpenSCManagerW, OpenServiceW, QueryServiceStatus, StartServiceW,
-            SC_MANAGER_CONNECT, SERVICE_CONTROL_STOP,
-        },
-    },
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::GetLastError;
+use windows::Win32::Security::SC_HANDLE;
+use windows::Win32::System::Services::{
+    CreateServiceW, OpenSCManagerW, OpenServiceW, QueryServiceConfigW, QueryServiceStatus,
+    QUERY_SERVICE_CONFIGW, SERVICE_STATUS,
 };
 
-use crate::dword::service_status::ServiceStatus;
+use crate::dword::{
+    sc_manager_access, service_access, ScManagerAccess, ServiceAccess, ServiceError,
+    ServiceErrorControl, ServiceStartType, ServiceStatus, ServiceType,
+};
 
-/// dword详细报错信息
-pub mod dword {
-    pub mod service_status {
-        use std::collections::HashMap;
-        use std::fmt::{Display, Formatter};
+mod dword;
 
-        use lazy_static::lazy_static;
-        use winapi::shared::minwindef::DWORD;
-
-        pub struct ServiceStatus {
-            pub kind: DWORD,
-        }
-
-        lazy_static! {
-            static ref SERVICE_STATUS: HashMap<u8, STATUS> = {
-                let map: HashMap<u8, STATUS> = HashMap::from([
-                    (1u8, STATUS::SERVICE_STOPPED),
-                    (2u8, STATUS::SERVICE_START_PENDING),
-                    (3u8, STATUS::SERVICE_STOP_PENDING),
-                    (4u8, STATUS::SERVICE_RUNNING),
-                    (5u8, STATUS::SERVICE_CONTINUE_PENDING),
-                    (6u8, STATUS::SERVICE_PAUSE_PENDING),
-                    (7u8, STATUS::SERVICE_PAUSED),
-                ]);
-                map
-            };
-        }
-
-        #[derive(Debug)]
-        #[allow(non_camel_case_types)]
-        #[derive(PartialEq)]
-        pub enum STATUS {
-            SERVICE_STOPPED,
-            SERVICE_START_PENDING,
-            SERVICE_STOP_PENDING,
-            SERVICE_RUNNING,
-            SERVICE_CONTINUE_PENDING,
-            SERVICE_PAUSE_PENDING,
-            SERVICE_PAUSED,
-        }
-
-        impl Display for ServiceStatus {
-            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                let num = self.kind as u8;
-                if SERVICE_STATUS.contains_key(&num) {
-                    write!(
-                        f,
-                        "Service Status({}):{:?}",
-                        &self.kind,
-                        SERVICE_STATUS.get(&num).unwrap()
-                    )
-                } else {
-                    write!(f, "UNKNOWN STATUS:{:?}", &self.kind)
-                }
-            }
-        }
-
-        impl ServiceStatus {
-            pub fn eq(&self, other: &STATUS) -> bool {
-                let value = SERVICE_STATUS.get(&(self.kind as u8)).unwrap();
-                return value == other;
-            }
-        }
-    }
-
-    pub mod service_errors {
-        use std::collections::HashMap;
-        use std::fmt::{Display, Formatter};
-
-        use lazy_static::lazy_static;
-        use winapi::shared::minwindef::DWORD;
-
-        #[derive(Debug)]
-        pub struct ServiceErrors {
-            pub kind: DWORD,
-        }
-
-        lazy_static! {
-            static ref SERVICE_ERRORS: HashMap<u16, STATUS> = {
-                let map: HashMap<u16, STATUS> = HashMap::from([
-                    (1068u16, STATUS::ERROR_SERVICE_DEPENDENCY_FAIL),
-                    (1058u16, STATUS::ERROR_SERVICE_DISABLED),
-                    (1051u16, STATUS::ERROR_DEPENDENT_SERVICES_RUNNING),
-                ]);
-                map
-            };
-        }
-
-        #[derive(Debug)]
-        #[allow(non_camel_case_types)]
-        #[derive(PartialEq)]
-        pub enum STATUS {
-            ERROR_SERVICE_DEPENDENCY_FAIL,
-            ERROR_SERVICE_DISABLED,
-            ERROR_DEPENDENT_SERVICES_RUNNING,
-        }
-
-        impl Display for ServiceErrors {
-            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                let num = self.kind as u16;
-                if SERVICE_ERRORS.contains_key(&num) {
-                    write!(
-                        f,
-                        "Service Error({}):{:?}",
-                        &self.kind,
-                        SERVICE_ERRORS.get(&num).unwrap()
-                    )
-                } else {
-                    write!(f, "UNKNOWN ERROR:{:?}", &self.kind)
-                }
-            }
-        }
-
-        impl ServiceErrors {
-            pub fn eq(&self, other: &STATUS) -> bool {
-                let value = SERVICE_ERRORS.get(&(self.kind as u16)).unwrap();
-                return value == other;
-            }
-        }
-    }
-}
-#[cfg(windows)]
+/// windows服务类
 pub struct WindowsService {
     sc_manager_handle: SC_HANDLE,
     service_handle: SC_HANDLE,
-    pub service_name: &'static str,
+    pub config: ServiceConfig,
 }
 
-#[cfg(windows)]
-impl Drop for WindowsService {
-    fn drop(&mut self) {
-        unsafe {
-            self.sc_manager_handle.drop_in_place();
-            self.service_handle.drop_in_place()
-        }
-    }
-}
+type ServiceConfig = QUERY_SERVICE_CONFIGW;
 
-#[cfg(windows)]
 impl WindowsService {
-    pub fn new(name: &'static str) -> Result<WindowsService, ServiceErrors> {
-        let sc_manager_handle = Self::open_sc_manager(SC_MANAGER_CONNECT)?;
+    /// 通过服务名打开一个服务实例
+    pub fn open(name: &str) -> Result<WindowsService, ServiceError> {
+        let sc_manager_handle = Self::open_sc_manager(
+            sc_manager_access::SC_MANAGER_CONNECT | sc_manager_access::GENERIC_WRITE,
+        )?;
         let service_handle = Self::open_service(
             sc_manager_handle,
             name,
-            SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_STOP,
+            service_access::GENERIC_READ | service_access::GENERIC_EXECUTE,
         )?;
         Ok(WindowsService {
             sc_manager_handle,
             service_handle,
-            service_name: name,
+            config: Self::get_config(service_handle)?,
         })
+    }
+
+    /// 请求当前服务状态
+    pub fn query_service_status(&self) -> ServiceStatus {
+        let mut status = SERVICE_STATUS::default();
+        unsafe {
+            QueryServiceStatus(self.service_handle, &mut status).unwrap();
+        };
+        status.dwCurrentState.into()
+    }
+
+    pub fn new(
+        name: &str,
+        display_name: Option<&str>,
+        service_type: ServiceType,
+        service_start_type: ServiceStartType,
+        error_control: ServiceErrorControl,
+        binary_path: Option<&str>,
+        dependencies: Option<Vec<&str>>,
+    ) -> Result<WindowsService, ServiceError> {
+        let sc_manager_handle = Self::open_sc_manager(
+            sc_manager_access::SC_MANAGER_CONNECT | sc_manager_access::GENERIC_WRITE,
+        )?;
+        let display_name = display_name.unwrap_or_else(|| name);
+        let binary_path = binary_path.unwrap_or_else(|| "");
+        let dependencies = match dependencies {
+            None => Vec::<u16>::default(),
+            Some(v) => {
+                let mut result: Vec<u16> = Vec::new();
+                for str in v {
+                    result.push(str.parse::<u16>().unwrap())
+                }
+                result
+            }
+        };
+        let service_handle = unsafe {
+            CreateServiceW(
+                sc_manager_handle,
+                PCWSTR(U16CString::from_str(name).unwrap().as_ptr()),
+                PCWSTR(U16CString::from_str(display_name).unwrap().as_ptr()),
+                service_access::GENERIC_READ | service_access::GENERIC_EXECUTE,
+                service_type,
+                service_start_type,
+                error_control,
+                PCWSTR(U16CString::from_str(binary_path).unwrap().as_ptr()),
+                PCWSTR::null(),
+                None,
+                PCWSTR(U16CString::from_vec(dependencies).unwrap().as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+            )
+        };
+        match service_handle {
+            Ok(handle) => Ok(WindowsService {
+                sc_manager_handle,
+                service_handle: handle,
+                config: Self::get_config(handle)?,
+            }),
+            Err(_) => unsafe { Err(GetLastError().into()) },
+        }
     }
 
     fn open_service(
         sc_manager_handle: SC_HANDLE,
-        service_name: &str,
-        desired_access: DWORD,
-    ) -> Result<SC_HANDLE, ServiceErrors> {
-        let service_name_wstr = U16CString::from_str(service_name).unwrap();
+        name: &str,
+        access: ServiceAccess,
+    ) -> Result<SC_HANDLE, ServiceError> {
         let service_handle = unsafe {
             OpenServiceW(
                 sc_manager_handle,
-                service_name_wstr.as_ptr(),
-                desired_access,
+                PCWSTR(U16CString::from_str(name).unwrap().as_ptr()),
+                access,
             )
         };
-        if service_handle.is_null() {
-            Err(ServiceErrors {
-                kind: unsafe { GetLastError() },
-            })
-        } else {
-            Ok(service_handle)
+        match service_handle {
+            Ok(handle) => Ok(handle),
+            Err(_) => unsafe { Err(GetLastError().into()) },
         }
     }
 
-    fn open_sc_manager(desired_access: DWORD) -> Result<SC_HANDLE, ServiceErrors> {
-        let sc_manager_handle = unsafe { OpenSCManagerW(null_mut(), null_mut(), desired_access) };
-        if sc_manager_handle.is_null() {
-            Err(ServiceErrors {
-                kind: unsafe { GetLastError() },
-            })
-        } else {
-            Ok(sc_manager_handle)
+    fn open_sc_manager(access: ScManagerAccess) -> Result<SC_HANDLE, ServiceError> {
+        let sc_manager_handle = unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), access) };
+        match sc_manager_handle {
+            Ok(handle) => Ok(handle),
+            Err(_) => unsafe { Err(GetLastError().into()) },
         }
     }
 
-    /// 请求服务状态
-    pub fn query_service_status(&self) -> Result<ServiceStatus, ServiceErrors> {
-        let mut service_status = unsafe { std::mem::zeroed() };
-        let result = unsafe { QueryServiceStatus(self.service_handle, &mut service_status) };
-        if result == 0 {
-            Err(ServiceErrors {
-                kind: unsafe { GetLastError() },
-            })
-        } else {
-            Ok(ServiceStatus {
-                kind: service_status.dwCurrentState,
-            })
-        }
-    }
-
-    /// 启动服务
-    pub fn start_service(&self) -> Result<(), ServiceErrors> {
-        let result = unsafe { StartServiceW(self.service_handle, 0, null_mut()) };
-        if result == 0 {
-            let dword = unsafe { GetLastError() };
-            if dword.eq(&1056) {
-                println!("WARNING: Service is already started.");
-                return Ok(());
+    fn get_config(service_handle: SC_HANDLE) -> Result<ServiceConfig, ServiceError> {
+        let mut config = ServiceConfig::default();
+        let mut cap: u32 = Default::default();
+        match unsafe { QueryServiceConfigW(service_handle, Some(&mut config), 370, &mut cap) } {
+            Ok(_) => Ok(config),
+            Err(_) => {
+                println!("{},{}", size_of::<ServiceConfig>() as u32, cap);
+                unsafe { Err(GetLastError().into()) }
             }
-            Err(ServiceErrors { kind: dword })
-        } else {
-            Ok(())
         }
     }
-
-    /// 关闭f服务
-    pub fn stop_service(&self) -> Result<(), ServiceErrors> {
-        let mut service_status = unsafe { std::mem::zeroed() };
-        let result = unsafe {
-            ControlService(
-                self.service_handle,
-                SERVICE_CONTROL_STOP,
-                &mut service_status,
-            )
-        };
-        if result == 0 {
-            Err(ServiceErrors {
-                kind: unsafe { GetLastError() },
-            })
-        } else {
-            Ok(())
-        }
-    }
-
-    // /// 删除服务
-    // fn delete_service(&self) -> Result<(), DWORD> {
-    //     let result = unsafe { DeleteService(self.service_handle) };
-    //     if result == 0 {
-    //         Err(unsafe { GetLastError() })
-    //     } else {
-    //         Ok(())
-    //     }
-    // }
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use crate::WindowsService;
 
     #[test]
-    fn it_works() {
-        let service = match WindowsService::new("gupdatem") {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("{}", e);
-                panic!()
+    fn open_service() {
+        let service = WindowsService::open("WSearch");
+        match service {
+            Ok(s) => {
+                println!("{:?}", s.config)
             }
-        };
-        println!("{}", service.query_service_status().unwrap());
+            Err(e) => {
+                println!("{}", e)
+            }
+        }
     }
 }
