@@ -1,8 +1,17 @@
 [package]
 name = "windows_service_controller"
+description = "A library to control windows service"
 version = "0.1.1"
 edition = "2021"
 authors = ["lers梦魔"]
+license = "MIT"
+homepage = "https://github.com/1412150209/rc_windows_service_controller"
+repository = "https://github.com/1412150209/rc_windows_service_controller"
+readme = "README.md"
+keywords = ["windows","service"]
+exclude = ["/src/main.rs","/target",".*"]
+
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
