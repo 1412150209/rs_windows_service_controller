@@ -1,12 +1,9 @@
-use std::mem::size_of;
-
-use widestring::U16CString;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::GetLastError;
 use windows::Win32::Security::SC_HANDLE;
 use windows::Win32::System::Services::{
-    CreateServiceW, OpenSCManagerW, OpenServiceW, QueryServiceConfigW, QueryServiceStatus,
-    QUERY_SERVICE_CONFIGW, SERVICE_STATUS,
+    ChangeServiceConfigW, CloseServiceHandle, CreateServiceW, DeleteService, OpenSCManagerW,
+    OpenServiceW, QueryServiceConfigW, QueryServiceStatus, QUERY_SERVICE_CONFIGW, SERVICE_STATUS,
 };
 
 use crate::dword::{
@@ -14,7 +11,7 @@ use crate::dword::{
     ServiceErrorControl, ServiceStartType, ServiceStatus, ServiceType,
 };
 
-mod dword;
+pub mod dword;
 
 /// windows服务类
 pub struct WindowsService {
@@ -25,16 +22,42 @@ pub struct WindowsService {
 
 type ServiceConfig = QUERY_SERVICE_CONFIGW;
 
+impl Drop for WindowsService {
+    fn drop(&mut self) {
+        unsafe {
+            CloseServiceHandle(self.service_handle).expect("关闭服务对象句柄失败");
+            CloseServiceHandle(self.sc_manager_handle).expect("关闭服务管理器句柄失败");
+        }
+    }
+}
+
 impl WindowsService {
-    /// 通过服务名打开一个服务实例
-    pub fn open(name: &str) -> Result<WindowsService, ServiceError> {
+    /// # 通过服务名打开一个服务实例
+    /// ## 参数
+    /// ### input:
+    /// - name: 服务名称(不是显示名称)
+    /// - service_access: 默认为SERVICE_ALL_ACCESS
+    /// - sc_manager_access: 默认为SC_MANAGER_CONNECT
+    /// ### output:
+    /// - Result<WindowsService,ServiceError>
+    /// ## 例子
+    /// ```
+    /// use windows_service_controller::dword::service_access;
+    /// use windows_service_controller::WindowsService;
+    /// let service = WindowsService::open("Lers", Some(service_access::GENERIC_READ),None);
+    /// ```
+    pub fn open(
+        name: &str,
+        service_access: Option<ServiceAccess>,
+        sc_manager_access: Option<ScManagerAccess>,
+    ) -> Result<WindowsService, ServiceError> {
         let sc_manager_handle = Self::open_sc_manager(
-            sc_manager_access::SC_MANAGER_CONNECT | sc_manager_access::GENERIC_WRITE,
+            sc_manager_access.unwrap_or_else(|| sc_manager_access::SC_MANAGER_CONNECT),
         )?;
         let service_handle = Self::open_service(
             sc_manager_handle,
             name,
-            service_access::GENERIC_READ | service_access::GENERIC_EXECUTE,
+            service_access.unwrap_or_else(|| service_access::SERVICE_ALL_ACCESS),
         )?;
         Ok(WindowsService {
             sc_manager_handle,
@@ -43,52 +66,85 @@ impl WindowsService {
         })
     }
 
-    /// 请求当前服务状态
-    pub fn query_service_status(&self) -> ServiceStatus {
+    /// # 请求当前服务状态
+    pub fn query_service_status(&self) -> Result<ServiceStatus, ServiceError> {
         let mut status = SERVICE_STATUS::default();
-        unsafe {
-            QueryServiceStatus(self.service_handle, &mut status).unwrap();
-        };
-        status.dwCurrentState.into()
+        let result = unsafe { QueryServiceStatus(self.service_handle, &mut status) };
+        if result.is_ok() {
+            Ok(status.dwCurrentState.into())
+        } else {
+            unsafe { Err(GetLastError().into()) }
+        }
     }
+
+    /// # 新建一个服务
+    /// ## 参数
+    /// ### input:
+    /// - name: 服务名称(最长256字符,斜杠无效)
+    /// - display_name: 服务显示名称,不写与name一致
+    /// - sc_manager_access: SCM的访问权限,默认SC_MANAGER_ALL_ACCESS,常量在 sc_service_access::
+    /// - service_access: 对服务的访问权限,默认SERVICE_ALL_ACCESS,常量在 service_access::
+    /// - service_type: 服务类型,常量在 service_type::
+    /// - service_start_type: 服务启动选项,常量在 service_start_type::
+    /// - error_control: 错误控制,常量在 service_error_control::
+    /// - binary_path: 需要启动的文件路径,路径可以包含启动的参数
+    /// - dependencies: 服务的依赖项
+    /// ### output:
+    /// - Result<WindowsService,ServiceError>
+    /// ## 例子
+    /// ```
+    /// use windows_service_controller::dword::{service_error_control, service_start_type, service_type};
+    /// use windows_service_controller::WindowsService;
+    /// let service = WindowsService::new(
+    ///     "Lers",
+    ///     None,
+    ///     None,
+    ///     None,
+    ///     service_type::SERVICE_WIN32_OWN_PROCESS,
+    ///     service_start_type::SERVICE_DEMAND_START,
+    ///     service_error_control::SERVICE_ERROR_NORMAL,
+    ///     "D:\\ENGLISH\\Rust\\hot_update\\target\\debug\\hot_update.exe",
+    ///     None,
+    ///  );
+    ///
 
     pub fn new(
         name: &str,
         display_name: Option<&str>,
+        sc_manager_access: Option<ScManagerAccess>,
+        service_access: Option<ServiceAccess>,
         service_type: ServiceType,
         service_start_type: ServiceStartType,
         error_control: ServiceErrorControl,
-        binary_path: Option<&str>,
+        binary_path: &str,
         dependencies: Option<Vec<&str>>,
     ) -> Result<WindowsService, ServiceError> {
         let sc_manager_handle = Self::open_sc_manager(
-            sc_manager_access::SC_MANAGER_CONNECT | sc_manager_access::GENERIC_WRITE,
+            sc_manager_access.unwrap_or_else(|| sc_manager_access::SC_MANAGER_ALL_ACCESS),
         )?;
         let display_name = display_name.unwrap_or_else(|| name);
-        let binary_path = binary_path.unwrap_or_else(|| "");
-        let dependencies = match dependencies {
-            None => Vec::<u16>::default(),
-            Some(v) => {
-                let mut result: Vec<u16> = Vec::new();
-                for str in v {
-                    result.push(str.parse::<u16>().unwrap())
-                }
-                result
-            }
-        };
         let service_handle = unsafe {
             CreateServiceW(
                 sc_manager_handle,
-                PCWSTR(U16CString::from_str(name).unwrap().as_ptr()),
-                PCWSTR(U16CString::from_str(display_name).unwrap().as_ptr()),
-                service_access::GENERIC_READ | service_access::GENERIC_EXECUTE,
+                PCWSTR!(name),
+                PCWSTR!(display_name),
+                service_access.unwrap_or_else(|| service_access::SERVICE_ALL_ACCESS),
                 service_type,
                 service_start_type,
                 error_control,
-                PCWSTR(U16CString::from_str(binary_path).unwrap().as_ptr()),
+                PCWSTR!(binary_path),
                 PCWSTR::null(),
                 None,
-                PCWSTR(U16CString::from_vec(dependencies).unwrap().as_ptr()),
+                match dependencies {
+                    None => PCWSTR::null(),
+                    Some(v) => {
+                        let mut result: Vec<u16> = Vec::new();
+                        for str in v {
+                            result.push(str.parse::<u16>().unwrap())
+                        }
+                        PCWSTR!(vec result)
+                    }
+                },
                 PCWSTR::null(),
                 PCWSTR::null(),
             )
@@ -103,18 +159,65 @@ impl WindowsService {
         }
     }
 
+    /// # 删除该服务
+    /// ## 参数
+    /// ### output:
+    /// - Result<(),ServiceError>
+    pub fn delete_service(&self) -> Result<(), ServiceError> {
+        let result = unsafe { DeleteService(self.service_handle) };
+        if result.is_ok() {
+            Ok(())
+        } else {
+            unsafe { Err(GetLastError().into()) }
+        }
+    }
+
+    /// # 更新服务配置
+    /// ## 参数
+    /// ### input:
+    /// - passwd: 修改服务密码,不修改请传入None
+    /// ### output:
+    /// - Result<(),ServiceError>
+    /// ## 例子
+    /// ```
+    /// use windows_service_controller::{PWSTR, WindowsService};
+    /// let mut service = WindowsService::open("Lers", None, None).unwrap();
+    ///
+    /// service.config.lpDisplayName = PWSTR!("lers233");
+    /// service.update_service_config(None).unwrap()
+    ///```
+    /// ## BUG
+    /// 似乎无法修改lpServiceStartName字段
+    pub fn update_service_config(&self, passwd: Option<&str>) -> Result<(), ServiceError> {
+        match unsafe {
+            ChangeServiceConfigW(
+                self.service_handle,
+                self.config.dwServiceType,
+                self.config.dwStartType,
+                self.config.dwErrorControl,
+                PCWSTR(self.config.lpBinaryPathName.as_ptr()),
+                PCWSTR(self.config.lpLoadOrderGroup.as_ptr()),
+                None,
+                PCWSTR(self.config.lpDependencies.as_ptr()),
+                PCWSTR::null(),
+                match passwd {
+                    None => PCWSTR::null(),
+                    Some(s) => PCWSTR!(s),
+                },
+                PCWSTR(self.config.lpDisplayName.as_ptr()),
+            )
+        } {
+            Ok(_) => Ok(()),
+            Err(_) => unsafe { Err(GetLastError().into()) },
+        }
+    }
+
     fn open_service(
         sc_manager_handle: SC_HANDLE,
         name: &str,
         access: ServiceAccess,
     ) -> Result<SC_HANDLE, ServiceError> {
-        let service_handle = unsafe {
-            OpenServiceW(
-                sc_manager_handle,
-                PCWSTR(U16CString::from_str(name).unwrap().as_ptr()),
-                access,
-            )
-        };
+        let service_handle = unsafe { OpenServiceW(sc_manager_handle, PCWSTR!(name), access) };
         match service_handle {
             Ok(handle) => Ok(handle),
             Err(_) => unsafe { Err(GetLastError().into()) },
@@ -135,8 +238,12 @@ impl WindowsService {
         match unsafe { QueryServiceConfigW(service_handle, Some(&mut config), 370, &mut cap) } {
             Ok(_) => Ok(config),
             Err(_) => {
-                println!("{},{}", size_of::<ServiceConfig>() as u32, cap);
-                unsafe { Err(GetLastError().into()) }
+                match unsafe {
+                    QueryServiceConfigW(service_handle, Some(&mut config), cap, &mut cap)
+                } {
+                    Ok(_) => Ok(config),
+                    Err(_) => unsafe { Err(GetLastError().into()) },
+                }
             }
         }
     }
@@ -144,17 +251,82 @@ impl WindowsService {
 
 #[cfg(test)]
 mod test {
-    use crate::WindowsService;
+    use crate::dword::{
+        sc_manager_access, service_access, service_error_control, service_start_type, service_type,
+    };
+    use crate::{WindowsService, PWSTR};
 
     #[test]
     fn open_service() {
-        let service = WindowsService::open("WSearch");
+        let service = WindowsService::open("WSearch", Some(service_access::GENERIC_READ), None);
         match service {
             Ok(s) => {
                 println!("{:?}", s.config)
             }
             Err(e) => {
                 println!("{}", e)
+            }
+        }
+    }
+
+    #[test]
+    fn create_service() {
+        let service = WindowsService::new(
+            "Lers",
+            None,
+            Some(sc_manager_access::GENERIC_WRITE),
+            Some(service_access::GENERIC_WRITE),
+            service_type::SERVICE_WIN32_OWN_PROCESS,
+            service_start_type::SERVICE_DEMAND_START,
+            service_error_control::SERVICE_ERROR_NORMAL,
+            "D:\\ENGLISH\\Rust\\hot_update\\target\\debug\\hot_update.exe",
+            None,
+        );
+        match service {
+            Ok(s) => {
+                println!("{:?}", s.config)
+            }
+            Err(e) => {
+                println!("{}", e)
+            }
+        }
+    }
+
+    #[test]
+    fn delete_service() {
+        let service = WindowsService::open("Lers", None, None);
+        match service {
+            Ok(s) => match s.delete_service() {
+                Ok(_) => {
+                    println!("succeed")
+                }
+                Err(e) => {
+                    println!("{}", e);
+                }
+            },
+            Err(e) => {
+                println!("{}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn update_service_config() {
+        let service = WindowsService::open("Lers", None, None);
+        match service {
+            Ok(mut s) => {
+                s.config.lpDisplayName = PWSTR!("lers test");
+                match s.update_service_config(None) {
+                    Ok(_) => {
+                        println!("succeed")
+                    }
+                    Err(e) => {
+                        println!("{}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("{}", e);
             }
         }
     }

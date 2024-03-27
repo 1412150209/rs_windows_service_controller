@@ -140,7 +140,7 @@ impl Display for ServiceStatus {
 }
 
 lazy_static! {
-    static ref SERVICE_STATUS: HashMap<ServiceStatus,&'static str> = {
+    static ref SERVICE_STATUS: HashMap<ServiceStatus, &'static str> = {
         let result = HashMap::from([
             (ServiceStatus::SERVICE_CONTINUE_PENDING, "服务即将继续。"),
             (ServiceStatus::SERVICE_PAUSE_PENDING, "服务即将暂停。"),
@@ -148,7 +148,7 @@ lazy_static! {
             (ServiceStatus::SERVICE_RUNNING, "服务正在运行。"),
             (ServiceStatus::SERVICE_START_PENDING, "服务正在启动。"),
             (ServiceStatus::SERVICE_STOP_PENDING, "服务正在停止。"),
-            (ServiceStatus::SERVICE_STOPPED, "服务未运行。")
+            (ServiceStatus::SERVICE_STOPPED, "服务未运行。"),
         ]);
         result
     };
@@ -268,4 +268,67 @@ pub mod service_error_control {
     pub const SERVICE_ERROR_IGNORE: ServiceErrorControl = Services::SERVICE_ERROR_IGNORE;
     pub const SERVICE_ERROR_NORMAL: ServiceErrorControl = Services::SERVICE_ERROR_NORMAL;
     pub const SERVICE_ERROR_SEVERE: ServiceErrorControl = Services::SERVICE_ERROR_SEVERE;
+}
+
+pub mod macros {
+    #[allow(non_snake_case)]
+    #[macro_export]
+    /// # 将字符串转换为PWSTR类型
+    /// ## 参数
+    /// - input: literal(字面类型)|expr(表达式,支持`&str`和`vec<u16>`)
+    /// - output: `PCWSTR`
+    /// ## 注意
+    /// 使用`vec<u16>`时，需要在前面加上vec以便区别开来
+    /// 例如:
+    /// ```
+    /// use windows_service_controller::PCWSTR;
+    /// let s:Vec<u16> = Vec::new();
+    /// PCWSTR!(vec s);
+    /// ```
+    macro_rules! PCWSTR {
+        ($s:literal) => {
+            windows::core::PCWSTR::from_raw(
+                widestring::U16CString::from_str($s).unwrap().into_raw(),
+            )
+        };
+        ($s:expr) => {
+            windows::core::PCWSTR::from_raw(
+                widestring::U16CString::from_str($s).unwrap().into_raw(),
+            )
+        };
+        (vec $s:expr) => {
+            windows::core::PCWSTR::from_raw(
+                widestring::U16CString::from_vec($s).unwrap().into_raw(),
+            )
+        };
+    }
+
+    #[allow(non_snake_case)]
+    #[macro_export]
+    /// # 将字符串转换为PWSTR类型
+    /// ## 参数
+    /// - input: literal(字面类型)|expr(表达式,支持`&str`)
+    /// - output: `PWSTR`
+    macro_rules! PWSTR {
+        ($s:literal) => {
+            windows::core::PWSTR::from_raw(widestring::U16CString::from_str($s).unwrap().into_raw())
+        };
+        ($s:expr) => {
+            windows::core::PWSTR::from_raw(widestring::U16CString::from_str($s).unwrap().into_raw())
+        };
+    }
+
+    #[cfg(test)]
+    mod test {
+        #[test]
+        fn test() {
+            let s = "lers";
+            unsafe {
+                println!("{:?}", PCWSTR!("lers").to_string());
+            }
+            unsafe {
+                println!("{:?}", PCWSTR!(s).to_string());
+            }
+        }
+    }
 }
