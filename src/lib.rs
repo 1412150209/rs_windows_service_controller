@@ -279,7 +279,7 @@ mod test {
             service_type::SERVICE_WIN32_OWN_PROCESS,
             service_start_type::SERVICE_DEMAND_START,
             service_error_control::SERVICE_ERROR_NORMAL,
-            "D:\\ENGLISH\\Rust\\hot_update\\target\\debug\\hot_update.exe",
+            "D:\\example\\some.exe",
             None,
         );
         match service {
