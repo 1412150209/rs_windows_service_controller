@@ -22,7 +22,7 @@ Current features:
 ```toml
 # Cargo.toml
 [dependencies]
-windows_service_controller = "0.1.1"
+windows_service_controller = "0.1.2"
 ```
 
 ### Open an existing service
