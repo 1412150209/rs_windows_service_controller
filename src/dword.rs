@@ -4,11 +4,11 @@ use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 
 use lazy_static::lazy_static;
+use lers_windows_macro::{FromInto, self_attr};
 use windows::Win32::Foundation;
 use windows::Win32::Foundation::WIN32_ERROR;
 use windows::Win32::System::Services;
 use windows::Win32::System::Services::{ENUM_SERVICE_TYPE, SERVICE_ERROR, SERVICE_START_TYPE, SERVICE_STATUS_CURRENT_STATE};
-use windows_macro::{FromInto, self_attr};
 
 #[derive(Debug, FromInto)]
 pub struct ServiceError(WIN32_ERROR);

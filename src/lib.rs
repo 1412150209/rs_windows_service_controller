@@ -1,16 +1,16 @@
+use lers_windows_macro::PCWSTR;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::GetLastError;
 use windows::Win32::Security::SC_HANDLE;
 use windows::Win32::System::Services::{
     ChangeServiceConfigW, CloseServiceHandle, CreateServiceW, DeleteService, OpenSCManagerW,
-    OpenServiceW, QueryServiceConfigW, QueryServiceStatus, QUERY_SERVICE_CONFIGW, SERVICE_STATUS,
+    OpenServiceW, QUERY_SERVICE_CONFIGW, QueryServiceConfigW, QueryServiceStatus, SERVICE_STATUS,
 };
 
 use crate::dword::{
     ScManagerAccess, ServiceAccess, ServiceError,
     ServiceErrorControl, ServiceStartType, ServiceStatus, ServiceType,
 };
-use windows_macro::PCWSTR;
 
 pub mod dword;
 
@@ -183,7 +183,7 @@ impl WindowsService {
     /// ```
     /// use windows_service_controller::WindowsService;
     /// let mut service = WindowsService::open("Lers", None, None).unwrap();
-    /// use windows_macro::PWSTR;
+    /// use lers_windows_macro::PWSTR;
     ///
     /// service.config.lpDisplayName = PWSTR!("lers233");
     /// service.update_service_config(None).unwrap()
@@ -253,7 +253,8 @@ impl WindowsService {
 
 #[cfg(test)]
 mod test {
-    use windows_macro::PWSTR;
+    use lers_windows_macro::PWSTR;
+
     use crate::dword::{ScManagerAccess, ServiceAccess, ServiceErrorControl, ServiceStartType, ServiceType};
     use crate::WindowsService;
 
