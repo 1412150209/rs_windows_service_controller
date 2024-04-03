@@ -7,9 +7,10 @@ use windows::Win32::System::Services::{
 };
 
 use crate::dword::{
-    sc_manager_access, service_access, ScManagerAccess, ServiceAccess, ServiceError,
+    ScManagerAccess, ServiceAccess, ServiceError,
     ServiceErrorControl, ServiceStartType, ServiceStatus, ServiceType,
 };
+use windows_macro::PCWSTR;
 
 pub mod dword;
 
@@ -42,9 +43,9 @@ impl WindowsService {
     /// - Result<WindowsService,ServiceError>
     /// ## 例子
     /// ```
-    /// use windows_service_controller::dword::service_access;
+    /// use windows_service_controller::dword::ServiceAccess;
     /// use windows_service_controller::WindowsService;
-    /// let service = WindowsService::open("Lers", Some(service_access::GENERIC_READ),None);
+    /// let service = WindowsService::open("Lers", Some(ServiceAccess::GENERIC_READ),None);
     /// ```
     pub fn open(
         name: &str,
@@ -52,12 +53,12 @@ impl WindowsService {
         sc_manager_access: Option<ScManagerAccess>,
     ) -> Result<WindowsService, ServiceError> {
         let sc_manager_handle = Self::open_sc_manager(
-            sc_manager_access.unwrap_or_else(|| sc_manager_access::SC_MANAGER_CONNECT),
+            sc_manager_access.unwrap_or_else(|| ScManagerAccess::SC_MANAGER_CONNECT),
         )?;
         let service_handle = Self::open_service(
             sc_manager_handle,
             name,
-            service_access.unwrap_or_else(|| service_access::SERVICE_ALL_ACCESS),
+            service_access.unwrap_or_else(|| ServiceAccess::SERVICE_ALL_ACCESS),
         )?;
         Ok(WindowsService {
             sc_manager_handle,
@@ -82,27 +83,27 @@ impl WindowsService {
     /// ### input:
     /// - name: 服务名称(最长256字符,斜杠无效)
     /// - display_name: 服务显示名称,不写与name一致
-    /// - sc_manager_access: SCM的访问权限,默认SC_MANAGER_ALL_ACCESS,常量在 sc_service_access::
-    /// - service_access: 对服务的访问权限,默认SERVICE_ALL_ACCESS,常量在 service_access::
+    /// - sc_manager_access: SCM的访问权限,默认SC_MANAGER_ALL_ACCESS
+    /// - service_access: 对服务的访问权限,默认SERVICE_ALL_ACCESS
     /// - service_type: 服务类型,常量在 service_type::
-    /// - service_start_type: 服务启动选项,常量在 service_start_type::
-    /// - error_control: 错误控制,常量在 service_error_control::
+    /// - service_start_type: 服务启动选项
+    /// - error_control: 错误控制
     /// - binary_path: 需要启动的文件路径,路径可以包含启动的参数
     /// - dependencies: 服务的依赖项
     /// ### output:
     /// - Result<WindowsService,ServiceError>
     /// ## 例子
     /// ```
-    /// use windows_service_controller::dword::{service_error_control, service_start_type, service_type};
+    /// use windows_service_controller::dword::{ServiceError, ServiceStartType, ServiceType};
     /// use windows_service_controller::WindowsService;
     /// let service = WindowsService::new(
     ///     "Lers",
     ///     None,
     ///     None,
     ///     None,
-    ///     service_type::SERVICE_WIN32_OWN_PROCESS,
-    ///     service_start_type::SERVICE_DEMAND_START,
-    ///     service_error_control::SERVICE_ERROR_NORMAL,
+    ///     ServiceType::SERVICE_WIN32_OWN_PROCESS,
+    ///     ServiceStartType::SERVICE_DEMAND_START,
+    ///     ServiceError::SERVICE_ERROR_NORMAL,
     ///     "D:\\ENGLISH\\Rust\\hot_update\\target\\debug\\hot_update.exe",
     ///     None,
     ///  );
@@ -120,7 +121,7 @@ impl WindowsService {
         dependencies: Option<Vec<&str>>,
     ) -> Result<WindowsService, ServiceError> {
         let sc_manager_handle = Self::open_sc_manager(
-            sc_manager_access.unwrap_or_else(|| sc_manager_access::SC_MANAGER_ALL_ACCESS),
+            sc_manager_access.unwrap_or_else(|| ScManagerAccess::SC_MANAGER_ALL_ACCESS),
         )?;
         let display_name = display_name.unwrap_or_else(|| name);
         let service_handle = unsafe {
@@ -128,10 +129,10 @@ impl WindowsService {
                 sc_manager_handle,
                 PCWSTR!(name),
                 PCWSTR!(display_name),
-                service_access.unwrap_or_else(|| service_access::SERVICE_ALL_ACCESS),
-                service_type,
-                service_start_type,
-                error_control,
+                service_access.unwrap_or_else(|| ServiceAccess::SERVICE_ALL_ACCESS).into(),
+                service_type.into(),
+                service_start_type.into(),
+                error_control.into(),
                 PCWSTR!(binary_path),
                 PCWSTR::null(),
                 None,
@@ -180,8 +181,9 @@ impl WindowsService {
     /// - Result<(),ServiceError>
     /// ## 例子
     /// ```
-    /// use windows_service_controller::{PWSTR, WindowsService};
+    /// use windows_service_controller::WindowsService;
     /// let mut service = WindowsService::open("Lers", None, None).unwrap();
+    /// use windows_macro::PWSTR;
     ///
     /// service.config.lpDisplayName = PWSTR!("lers233");
     /// service.update_service_config(None).unwrap()
@@ -217,7 +219,7 @@ impl WindowsService {
         name: &str,
         access: ServiceAccess,
     ) -> Result<SC_HANDLE, ServiceError> {
-        let service_handle = unsafe { OpenServiceW(sc_manager_handle, PCWSTR!(name), access) };
+        let service_handle = unsafe { OpenServiceW(sc_manager_handle, PCWSTR!(name), access.into()) };
         match service_handle {
             Ok(handle) => Ok(handle),
             Err(_) => unsafe { Err(GetLastError().into()) },
@@ -225,7 +227,7 @@ impl WindowsService {
     }
 
     fn open_sc_manager(access: ScManagerAccess) -> Result<SC_HANDLE, ServiceError> {
-        let sc_manager_handle = unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), access) };
+        let sc_manager_handle = unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), access.into()) };
         match sc_manager_handle {
             Ok(handle) => Ok(handle),
             Err(_) => unsafe { Err(GetLastError().into()) },
@@ -251,14 +253,13 @@ impl WindowsService {
 
 #[cfg(test)]
 mod test {
-    use crate::dword::{
-        sc_manager_access, service_access, service_error_control, service_start_type, service_type,
-    };
-    use crate::{WindowsService, PWSTR};
+    use windows_macro::PWSTR;
+    use crate::dword::{ScManagerAccess, ServiceAccess, ServiceErrorControl, ServiceStartType, ServiceType};
+    use crate::WindowsService;
 
     #[test]
     fn open_service() {
-        let service = WindowsService::open("WSearch", Some(service_access::GENERIC_READ), None);
+        let service = WindowsService::open("WSearch", Some(ServiceAccess::GENERIC_READ), None);
         match service {
             Ok(s) => {
                 println!("{:?}", s.config)
@@ -274,11 +275,11 @@ mod test {
         let service = WindowsService::new(
             "Lers",
             None,
-            Some(sc_manager_access::GENERIC_WRITE),
-            Some(service_access::GENERIC_WRITE),
-            service_type::SERVICE_WIN32_OWN_PROCESS,
-            service_start_type::SERVICE_DEMAND_START,
-            service_error_control::SERVICE_ERROR_NORMAL,
+            Some(ScManagerAccess::GENERIC_WRITE),
+            Some(ServiceAccess::GENERIC_WRITE),
+            ServiceType::SERVICE_WIN32_OWN_PROCESS,
+            ServiceStartType::SERVICE_DEMAND_START,
+            ServiceErrorControl::SERVICE_ERROR_NORMAL,
             "D:\\example\\some.exe",
             None,
         );
