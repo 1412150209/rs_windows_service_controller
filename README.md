@@ -124,6 +124,8 @@ fn update_service_config() {
 }
 ```
 
+**BUG: "lpServiceStartName" can't be edit.**
+
 ### Start service
 
 ```rust
@@ -169,7 +171,5 @@ fn update_service_config() {
     }
 }
 ```
-
-**BUG: "lpServiceStartName" can't be edit.**
 
 ​    
