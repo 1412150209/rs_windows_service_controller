@@ -2,15 +2,9 @@ use lers_windows_macro::PCWSTR;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::GetLastError;
 use windows::Win32::Security::SC_HANDLE;
-use windows::Win32::System::Services::{
-    ChangeServiceConfigW, CloseServiceHandle, CreateServiceW, DeleteService, OpenSCManagerW,
-    OpenServiceW, QUERY_SERVICE_CONFIGW, QueryServiceConfigW, QueryServiceStatus, SERVICE_STATUS,
-};
+use windows::Win32::System::Services::{ChangeServiceConfigW, CloseServiceHandle, ControlService, CreateServiceW, DeleteService, OpenSCManagerW, OpenServiceW, QUERY_SERVICE_CONFIGW, QueryServiceConfigW, QueryServiceStatus, SERVICE_STATUS, StartServiceW};
 
-use crate::dword::{
-    ScManagerAccess, ServiceAccess, ServiceError,
-    ServiceErrorControl, ServiceStartType, ServiceStatus, ServiceType,
-};
+use crate::dword::{ScManagerAccess, ServiceAccess, ServiceControlCode, ServiceError, ServiceErrorControl, ServiceStartType, ServiceStatus, ServiceType};
 
 pub mod dword;
 
@@ -214,6 +208,93 @@ impl WindowsService {
         }
     }
 
+    /// # 发送控制代码到服务
+    /// ## 参数：
+    /// ### input:
+    /// - code: 控制代码
+    /// ### output:
+    /// - Result<(),ServiceError>
+    /// ## 例子
+    /// ```
+    /// use windows_service_controller::dword::ServiceControlCode;
+    /// use windows_service_controller::WindowsService;
+    /// let mut service = WindowsService::open("Lers", None, None).unwrap();
+    /// match service.control_service(ServiceControlCode::SERVICE_CONTROL_STOP){
+    ///     Ok(_) => {
+    ///         println!("succeed")
+    ///     }
+    ///     Err(e) => {
+    ///         println!("{}", e)
+    ///     }
+    /// }
+    /// ```
+    pub fn control_service(&self, code: ServiceControlCode) -> Result<(), ServiceError> {
+        let mut service_status = SERVICE_STATUS::default();
+        unsafe {
+            match ControlService(
+                self.service_handle,
+                code.into(),
+                &mut service_status,
+            )
+            {
+                Ok(_) => { Ok(()) }
+                Err(_) => { Err(GetLastError().into()) }
+            }
+        }
+    }
+
+    /// # 开启服务
+    /// ## 参数：
+    /// ### output:
+    /// - Result<(),ServiceError>
+    /// ## 例子
+    /// ```
+    /// use windows_service_controller::WindowsService;
+    /// let mut service = WindowsService::open("Lers", None, None).unwrap();
+    ///
+    /// match service.start_service(){
+    ///     Ok(_) => {
+    ///         println!("succeed")
+    ///     }
+    ///     Err(e) => {
+    ///         println!("{}", e)
+    ///     }
+    /// }
+    /// ```
+    pub fn start_service(&self) -> Result<(), ServiceError> {
+        unsafe {
+            match StartServiceW(
+                self.service_handle,
+                None,
+            ) {
+                Ok(_) => { Ok(()) }
+                Err(_) => Err(GetLastError().into()),
+            }
+        }
+    }
+
+    /// # 停止服务
+    /// ## 参数:
+    /// ### output:
+    /// - Result<(),ServiceError>
+    /// ## 例子
+    /// ```
+    /// use windows_service_controller::WindowsService;
+    /// let mut service = WindowsService::open("Lers", None, None).unwrap();
+    ///
+    /// match service.stop_service(){
+    ///     Ok(_) => {
+    ///         println!("succeed")
+    ///     }
+    ///     Err(e) => {
+    ///         println!("{}", e)
+    ///     }
+    /// }
+    /// ```
+    pub fn stop_service(&self) -> Result<(), ServiceError> {
+        self.control_service(ServiceControlCode::SERVICE_CONTROL_STOP)
+    }
+
     fn open_service(
         sc_manager_handle: SC_HANDLE,
         name: &str,
@@ -281,7 +362,7 @@ mod test {
             ServiceType::SERVICE_WIN32_OWN_PROCESS,
             ServiceStartType::SERVICE_DEMAND_START,
             ServiceErrorControl::SERVICE_ERROR_NORMAL,
-            "D:\\example\\some.exe",
+            "C:\\WINDOWS\\system32\\cmd.exe",
             None,
         );
         match service {
@@ -319,6 +400,46 @@ mod test {
             Ok(mut s) => {
                 s.config.lpDisplayName = PWSTR!("lers test");
                 match s.update_service_config(None) {
+                    Ok(_) => {
+                        println!("succeed")
+                    }
+                    Err(e) => {
+                        println!("{}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("{}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn start_service() {
+        let service = WindowsService::open("InstallService", None, None);
+        match service {
+            Ok(s) => {
+                match s.start_service() {
+                    Ok(_) => {
+                        println!("succeed")
+                    }
+                    Err(e) => {
+                        println!("{}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("{}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn stop_service() {
+        let service = WindowsService::open("InstallService", None, None);
+        match service {
+            Ok(s) => {
+                match s.stop_service() {
                     Ok(_) => {
                         println!("succeed")
                     }
